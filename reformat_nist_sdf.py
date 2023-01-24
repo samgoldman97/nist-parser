@@ -21,6 +21,12 @@ from pathos import multiprocessing as mp
 
 NAME_STRING = r"<(.*)>"
 COLLISION_REGEX = "([0-9]+)"
+VALID_ELS = set(["C", "N", "P", "O", "S", "Si", "I", "H", "Cl", "F", "Br", "B",
+                 "Se", "Fe", "Co", "As", "Na", "K"])
+
+
+def get_els(form):
+    return {i[0] for i in re.findall("([A-Z][a-z]*)([0-9]*)", form)}
 
 
 def chunked_parallel(input_list, function, chunks=100, max_cpu=16):
@@ -128,18 +134,10 @@ def process_sdf(line: Iterator):
         line (Iterator): line
     """
     entry_iterator = groupby(line, key=lambda x: x.startswith(">"))
-    mol_entry = "".join(next(entry_iterator)[1])
-    mol = Chem.MolFromMolBlock(mol_entry)
-    if mol is None or mol.GetNumAtoms() == 0:
-        return {}
+    mol_block = "".join(next(entry_iterator)[1])
 
-    smi = Chem.MolToSmiles(mol, isomericSmiles=True)
-    mol = Chem.MolFromSmiles(smi)
-    inchikey = Chem.MolToInchiKey(mol)
-    formula = uncharged_formula(mol, mol_type="mol")
 
-    output_dict = {"smiles": smi}
-
+    output_dict = {}
     for new_field, field in entry_iterator:
         name = "".join(field).strip()
         data = "".join(next(entry_iterator)[1]).strip()
@@ -156,10 +154,10 @@ def process_sdf(line: Iterator):
                 peaks.append(peak_tuple)
             output_dict["Peaks"] = peaks
         elif name == "INCHIKEY":
-            output_dict[name] = inchikey
+            output_dict[name] = data.strip()
         elif name == "FORMULA":
             # Should line up, but computing our way to be sure
-            output_dict[name] = formula
+            output_dict[name] = data.strip()
         elif name == "SYNONYMS":
             output_dict[name] = data.split("\n")[0].strip()
         elif name == "NISTNO":
@@ -167,6 +165,22 @@ def process_sdf(line: Iterator):
             output_dict["spec_id"] = f"nist_{data}"
         else:
             output_dict[name] = data
+
+    # Apply filter before converting
+    if fails_filter(output_dict):
+        return {}
+
+    mol = Chem.MolFromMolBlock(mol_block)
+    if mol is None or mol.GetNumAtoms() == 0:
+        return {}
+
+    smi = Chem.MolToSmiles(mol, isomericSmiles=True)
+    mol = Chem.MolFromSmiles(smi)
+    inchikey = Chem.MolToInchiKey(mol)
+    formula = uncharged_formula(mol, mol_type="mol")
+    output_dict['FORMULA'] = formula
+    output_dict['INCHIKEY'] = inchikey
+    output_dict['smiles'] = smi
     return output_dict
 
 
@@ -262,31 +276,28 @@ def read_sdf(input_file, debug=False):
     return lines_to_process
 
 
-def filter_entries(entries):
+def fails_filter(entry, valid_adduct=("[M+H]+", "[M+Na]+", "[M+K]+",
+                                      "[M+H-H2O]+", "[M+NH4]+",
+                                      "[M+H-2H2O]+",),
+                 max_mass=1500,
+                 ):
+    """ fails_filter. """
+    if entry['PRECURSOR TYPE'] not in valid_adduct:
+        return True
 
-    valid_adduct = ["[M+H]+",
-                    "[M+Na]+",
-                    "[M+K]+",
-                    "[M+H-H2O]+",
-                    "[M+NH4]+",
-                    "[M+H-2H2O]+",]
-    max_mass = 1500
-    out_entries = []
-    for i, j in entries:
-
-        if i['PRECURSOR TYPE'] not in valid_adduct:
-            continue
-
-        if float(i['EXACT MASS']) > max_mass:
-            continue
+    if float(entry['EXACT MASS']) > max_mass:
+        return True
 
         # QTOF, HCD,
-        if i['INSTRUMENT TYPE'].upper() != "HCD":
-            continue
+    if entry['INSTRUMENT TYPE'].upper() != "HCD":
+        return True
 
-        out_entries.append((i, j))
+    form_els = get_els(entry['FORMULA'])
+    if len(form_els.intersection(VALID_ELS)) != len(form_els):
+        return True
 
-    return out_entries
+
+    return False
         
 
 if __name__ == "__main__":
@@ -356,8 +367,6 @@ if __name__ == "__main__":
             for instrument, collision_dict in instrument_dict.items():
                 output_dict = merge_data(collision_dict)
                 merged_entries.append(output_dict)
-
-    merged_entries = filter_entries(merged_entries)
 
     print(f"Parallelizing export to file")
     dump_fn = partial(dump_to_file, out_folder=target_ms)
