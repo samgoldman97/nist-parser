@@ -279,6 +279,11 @@ def filter_entries(entries):
 
         if float(i['EXACT MASS']) > max_mass:
             continue
+
+        # QTOF, HCD,
+        if i['INSTRUMENT TYPE'].upper() != "HCD":
+            continue
+
         out_entries.append((i, j))
 
     return out_entries
