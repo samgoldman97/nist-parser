@@ -23,6 +23,9 @@ NAME_STRING = r"<(.*)>"
 COLLISION_REGEX = "([0-9]+)"
 VALID_ELS = set(["C", "N", "P", "O", "S", "Si", "I", "H", "Cl", "F", "Br", "B",
                  "Se", "Fe", "Co", "As", "Na", "K"])
+ION_MAP = {'[M+H-H2O]+': '[M-H2O+H]+',
+           '[M+NH4]+': '[M+H3N+H]+',
+           '[M+H-2H2O]+': '[M-H4O2+H]+',}
 
 
 def get_els(form):
@@ -288,7 +291,7 @@ def fails_filter(entry, valid_adduct=("[M+H]+", "[M+Na]+", "[M+K]+",
     if float(entry['EXACT MASS']) > max_mass:
         return True
 
-        # QTOF, HCD,
+    # QTOF, HCD,
     if entry['INSTRUMENT TYPE'].upper() != "HCD":
         return True
 
@@ -379,4 +382,7 @@ if __name__ == "__main__":
     open(target_mgf / "nist_all.mgf", "w").write(mgf_out)
 
     df = pd.DataFrame(output_entries)
+
+    # Transform ions
+    df['ionization'] = [ION_MAP.get(i, i) for i in df['ionization'].values]
     df.to_csv(target_labels, sep="\t", index=False)

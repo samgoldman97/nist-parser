@@ -2,7 +2,6 @@
 
 This repository provides helper scripts to process and filter the NIST20 library for downstream machine learning. We parse the sepctra from the .SDF file. 
 
-
 To export after parsing:
 ```
 tar -cvf nist_processeed.tar processed_data/
