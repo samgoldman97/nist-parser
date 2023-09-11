@@ -308,24 +308,31 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", default=False, action="store_true")
+    parser.add_argument("--input-file", action="store",
+                        default="../hr_msms_nist.SDF")
+    parser.add_argument("--workers", action="store",
+                        default=32)
+    parser.add_argument("--targ-dir", action="store",
+                        default="../processed_data/")
     args = parser.parse_args()
     debug = args.debug
+    workers = args.workers
 
-    target_directory = "processed_data"
-    input_file = "hr_msms_nist.SDF"
+    target_directory = args.targ_dir
+    input_file = args.input_file
+
     if debug:
-        input_file = "hr_msms_nist_debug.SDF"
-        target_directory = "processed_data/debug"
+        target_directory = Path(target_directory) / "debug"
 
     target_directory = Path(target_directory)
 
-    target_directory.mkdir(exist_ok=True)
+    target_directory.mkdir(exist_ok=True, parents=True)
     target_ms = target_directory / "spec_files"
     target_mgf = target_directory / "mgf_files"
     target_labels = target_directory / "labels.tsv"
 
-    target_ms.mkdir(exist_ok=True)
-    target_mgf.mkdir(exist_ok=True)
+    target_ms.mkdir(exist_ok=True, parents=True)
+    target_mgf.mkdir(exist_ok=True, parents=True)
 
     lines_to_process = read_sdf(input_file, debug=debug)
 
@@ -335,7 +342,7 @@ if __name__ == "__main__":
         output_dicts = [process_sdf_temp(i) for i in tqdm(lines_to_process)]
     else:
         output_dicts = chunked_parallel(lines_to_process, process_sdf_temp,
-                                        1000)
+                                        1000, max_cpu=workers) 
 
     # Reformat output dicts
     # {inchikey: {adduct : {instrumnet : {collision energy : spectra} }  }}
@@ -345,6 +352,7 @@ if __name__ == "__main__":
 
 
     print("Shuffling dict before merge")
+    spec_types = []
     for output_dict in tqdm(output_dicts):
         if len(output_dict) == 0:
             continue
@@ -352,6 +360,8 @@ if __name__ == "__main__":
         precusor_type = output_dict["PRECURSOR TYPE"]
         instrument_type = output_dict["INSTRUMENT TYPE"]
         collision_energy = output_dict["COLLISION ENERGY"]
+        spec_type = output_dict["SPECTRUM TYPE"]
+        spec_types.append(spec_type)
         col_energies = re.findall(COLLISION_REGEX, collision_energy)
         if len(col_energies) == 0:
             print(f"Skipping entry {output_dict} due to no col energy")
@@ -360,7 +370,6 @@ if __name__ == "__main__":
         parsed_data[inchikey][precusor_type][instrument_type][
             collision_energy
         ] = output_dict
-
 
     # merge entries
     merged_entries = []
@@ -376,7 +385,8 @@ if __name__ == "__main__":
     if debug:
         output_entries = [dump_fn(i) for i in merged_entries]
     else:
-        output_entries = chunked_parallel(merged_entries, dump_fn, 10000)
+        output_entries = chunked_parallel(merged_entries, dump_fn, 10000,
+                                          max_cpu=workers)
 
     mgf_out = build_mgf_str(merged_entries)
     open(target_mgf / "nist_all.mgf", "w").write(mgf_out)
